@@ -1,4 +1,7 @@
-__all__ = ["__version__"]
+from .data_manager import DataManager, DownsampledSeries
 
-__version__ = "0.1.0"
+__all__ = ["DataManager", "DownsampledSeries", "__version__"]
+
+__version__ = "1.0.0"
+
 

@@ -4,12 +4,17 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wte-trend-viewer"
-version = "0.1.0"
+version = "1.0.0"
 description = "Modern SCADA trend viewer prototype guided by the project blueprint."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "PySide6>=6.8,<7",
+    "numpy>=2,<3",
+    "polars[calamine,numpy]>=1.38,<2",
+    "pyqtgraph>=0.14,<1",
+    "tsdownsample>=0.1.4.1,<0.2 ; python_version < '3.14'",
+    "tsdownsample @ git+https://github.com/predict-idlab/tsdownsample.git@cdb709468a5979eda7a7a1d702ababd89cebc78a ; python_version >= '3.14'",
 ]
 
 [project.scripts]
