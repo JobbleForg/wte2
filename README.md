@@ -1,26 +1,20 @@
-# wte2
+# WTE Trend Viewer
 
-Local SCADA-style trend viewer for Excel exports, with interaction patterns modeled on ABB 800xA trend ruler behavior.
+Phase 1 of the SCADA trend viewer blueprint is now scaffolded in this repository.
 
-## Included
+Current scope:
 
-- `scada_trend_viewer/`: self-contained Python webapp
-- `docs/Raw Data.xlsx`: sample workbook for immediate testing
-- `docs/System 800xA Operations page 163.pdf`: ABB vertical ruler reference
-- `docs/System 800xA Operations page 165.pdf`: ABB horizontal ruler reference
+- PySide6 application bootstrap
+- Main window skeleton with a left tag browser dock
+- Placeholder white trend canvas
+- Bottom legend and analytics dock
+- ISA-101-inspired muted industrial styling
 
-## Run
+Run locally:
 
-```bash
-python3 scada_trend_viewer/server.py
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python -m pip install -e .
+.\.venv\Scripts\wte-trend-viewer
 ```
 
-Then open `http://127.0.0.1:8123`.
-
-If you are running in WSL, VM, or another remote environment, use:
-
-```bash
-python3 scada_trend_viewer/server.py --host 0.0.0.0
-```
-
-Then open `http://<host-ip>:8123`.
