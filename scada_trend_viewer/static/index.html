@@ -1,0 +1,113 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>SCADA Trend Viewer</title>
+    <link rel="stylesheet" href="/styles.css">
+  </head>
+  <body>
+    <div id="app">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">800xA</div>
+          <div>
+            <div class="eyebrow">Local Engineering Workspace</div>
+            <h1>SCADA Trend Viewer</h1>
+          </div>
+        </div>
+        <div class="toolbar-group">
+          <label class="field">
+            <span>Workbook</span>
+            <select id="workbookSelect"></select>
+          </label>
+          <button id="uploadButton" class="toolbar-button">Open Excel</button>
+          <input id="uploadInput" type="file" accept=".xlsx,.xlsm,.xltx,.xltm" hidden>
+          <label class="field">
+            <span>Sheet</span>
+            <select id="sheetSelect"></select>
+          </label>
+        </div>
+        <div class="toolbar-group compact">
+          <button data-range="full" class="toolbar-button range-button active">Full</button>
+          <button data-range="12" class="toolbar-button range-button">12h</button>
+          <button data-range="4" class="toolbar-button range-button">4h</button>
+          <button data-range="1" class="toolbar-button range-button">1h</button>
+          <button id="fitYButton" class="toolbar-button active">Auto Y</button>
+        </div>
+      </header>
+
+      <main class="workspace">
+        <aside class="sidebar panel">
+          <section class="panel-section">
+            <div class="section-title">Ruler Control</div>
+            <div class="button-row">
+              <button id="verticalModeButton" class="toolbar-button active">Vertical</button>
+              <button id="horizontalModeButton" class="toolbar-button">Horizontal</button>
+            </div>
+            <div class="status-grid">
+              <div class="status-label">Ruler Time</div>
+              <div id="rulerTime" class="status-value">-</div>
+              <div class="status-label">Horizontal Value</div>
+              <div id="horizontalValue" class="status-value">-</div>
+            </div>
+          </section>
+
+          <section class="panel-section">
+            <div class="section-title">Item Selector</div>
+            <input id="tagFilter" class="filter-input" type="search" placeholder="Filter tags or signals">
+            <div id="tagList" class="tag-list"></div>
+          </section>
+        </aside>
+
+        <section class="main-column">
+          <section class="panel chart-panel">
+            <div class="chart-header">
+              <div>
+                <div class="section-title">Trend Area</div>
+                <div id="sheetMeta" class="chart-meta">No data loaded</div>
+              </div>
+              <div id="trendStats" class="chart-meta"></div>
+            </div>
+            <div class="canvas-wrap">
+              <canvas id="trendCanvas"></canvas>
+            </div>
+            <div class="bottom-bar">
+              <div class="status-chip">Arrow Left/Right: move vertical ruler</div>
+              <div class="status-chip">Arrow Up/Down: move horizontal ruler</div>
+              <div id="windowInfo" class="status-chip"></div>
+            </div>
+          </section>
+
+          <section class="tables">
+            <section class="panel table-panel">
+              <div class="section-title">Trend Table</div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Pen</th>
+                      <th>Current</th>
+                      <th>Ruler</th>
+                      <th>Min</th>
+                      <th>Max</th>
+                      <th>Avg</th>
+                    </tr>
+                  </thead>
+                  <tbody id="trendTableBody"></tbody>
+                </table>
+              </div>
+            </section>
+
+            <section class="panel item-panel">
+              <div class="section-title">Item Area</div>
+              <div id="itemArea" class="item-area"></div>
+            </section>
+          </section>
+        </section>
+      </main>
+    </div>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>
