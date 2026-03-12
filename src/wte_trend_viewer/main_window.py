@@ -200,6 +200,7 @@ class TrendViewerMainWindow(QMainWindow):
 
         self._data_manager: DataManager | None = None
         self._load_thread: QThread | None = None
+        self._load_worker: ExcelLoadWorker | None = None
         self._tag_offsets: dict[str, list[timedelta]] = {}
         self._current_cursor_time: datetime | None = None
 
@@ -330,10 +331,11 @@ class TrendViewerMainWindow(QMainWindow):
         worker.loaded.connect(self._handle_workbook_loaded)
         worker.failed.connect(self._handle_load_error)
         worker.finished.connect(thread.quit)
-        worker.finished.connect(worker.deleteLater)
+        worker.finished.connect(self._clear_load_worker)
         thread.finished.connect(thread.deleteLater)
         thread.finished.connect(self._handle_load_finished)
 
+        self._load_worker = worker
         self._load_thread = thread
         thread.start()
 
@@ -361,6 +363,12 @@ class TrendViewerMainWindow(QMainWindow):
     def _handle_load_error(self, message: str) -> None:
         QMessageBox.critical(self, "Workbook Load Failed", message)
         self.statusBar().showMessage("Workbook load failed.", 5000)
+
+    @Slot()
+    def _clear_load_worker(self) -> None:
+        if self._load_worker is not None:
+            self._load_worker.deleteLater()
+            self._load_worker = None
 
     @Slot()
     def _handle_load_finished(self) -> None:

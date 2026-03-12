@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import numpy as np
 import pyqtgraph as pg
@@ -368,4 +368,4 @@ class TrendPlotCanvas(pg.GraphicsLayoutWidget):
         return array.astype(float, copy=False)
 
     def _from_plot_x(self, value: float) -> datetime:
-        return datetime.fromtimestamp(value)
+        return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
