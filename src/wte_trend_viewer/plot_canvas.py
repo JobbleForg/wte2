@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 
 import numpy as np
 import pyqtgraph as pg
@@ -368,4 +368,6 @@ class TrendPlotCanvas(pg.GraphicsLayoutWidget):
         return array.astype(float, copy=False)
 
     def _from_plot_x(self, value: float) -> datetime:
-        return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
+        # Keep the inverse conversion in local time so viewport ranges round-trip
+        # to the same naive timestamps that were used when plotting the data.
+        return datetime.fromtimestamp(value)
