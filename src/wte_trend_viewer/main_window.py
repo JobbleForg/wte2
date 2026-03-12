@@ -9,13 +9,21 @@ from PySide6.QtCore import QObject, QThread, QTimer, Qt, Signal, Slot
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QApplication,
+    QDialog,
+    QDialogButtonBox,
     QDockWidget,
     QFileDialog,
     QHeaderView,
+    QHBoxLayout,
     QInputDialog,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
     QTableWidget,
@@ -26,7 +34,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .data_manager import DataManager
+from .data_manager import DataManager, WorkbookSheetInfo
 from .plot_canvas import TrendPlotCanvas
 from .tag_tree_model import TagTreeModel
 
@@ -172,24 +180,140 @@ class ExcelLoadWorker(QObject):
     failed = Signal(str)
     finished = Signal()
 
-    def __init__(self, file_path: str) -> None:
+    def __init__(self, file_path: str, sheet_names: tuple[str, ...]) -> None:
         super().__init__()
         self._file_path = file_path
+        self._sheet_names = sheet_names
 
     @Slot()
     def run(self) -> None:
         try:
-            self.progress.emit(f"Reading {Path(self._file_path).name} with Polars...")
+            workbook_name = Path(self._file_path).name
             manager = DataManager()
-            manager.load_excel(self._file_path)
+            if len(self._sheet_names) <= 1:
+                selected_sheet = self._sheet_names[0] if self._sheet_names else None
+                sheet_suffix = f" / {selected_sheet}" if selected_sheet else ""
+                self.progress.emit(f"Reading {workbook_name}{sheet_suffix} with Polars...")
+                manager.load_excel(self._file_path, sheet_name=selected_sheet)
+            else:
+                self.progress.emit(
+                    f"Reading {len(self._sheet_names)} selected worksheets from {workbook_name}..."
+                )
+                manager.load_workbook(self._file_path, sheet_names=self._sheet_names)
             self.progress.emit(
-                f"Loaded {len(manager.available_tags)} tags from {Path(self._file_path).name}."
+                f"Loaded {len(manager.available_tags)} tags from {len(manager.sheet_names) or 1} worksheet(s)."
             )
             self.loaded.emit(manager)
         except Exception as exc:  # pragma: no cover - UI path
             self.failed.emit(str(exc))
         finally:
             self.finished.emit()
+
+
+class SheetSelectionDialog(QDialog):
+    def __init__(
+        self,
+        workbook_name: str,
+        sheet_info: tuple[WorkbookSheetInfo, ...],
+        parent=None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Select Data Sheets")
+        self.resize(680, 420)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
+
+        description = QLabel(
+            (
+                f"Select one or more worksheets from {workbook_name}.\n"
+                "Sheets with detected timestamp columns are pre-selected."
+            ),
+            self,
+        )
+        description.setWordWrap(True)
+        layout.addWidget(description)
+
+        self._sheet_list = QListWidget(self)
+        for info in sheet_info:
+            item = QListWidgetItem(self._describe_sheet(info))
+            item.setData(Qt.UserRole, info.name)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked if info.is_data_sheet else Qt.Unchecked)
+            tooltip = (
+                f"Detected timestamp column: {info.timestamp_column}"
+                if info.timestamp_column
+                else "No timestamp column detected automatically."
+            )
+            item.setToolTip(tooltip)
+            self._sheet_list.addItem(item)
+        layout.addWidget(self._sheet_list, stretch=1)
+
+        quick_actions = QHBoxLayout()
+        select_suggested_button = QPushButton("Select Suggested", self)
+        select_suggested_button.clicked.connect(self._select_suggested)
+        quick_actions.addWidget(select_suggested_button)
+
+        select_all_button = QPushButton("Select All", self)
+        select_all_button.clicked.connect(self._select_all)
+        quick_actions.addWidget(select_all_button)
+
+        clear_button = QPushButton("Clear", self)
+        clear_button.clicked.connect(self._clear_selection)
+        quick_actions.addWidget(clear_button)
+        quick_actions.addStretch(1)
+        layout.addLayout(quick_actions)
+
+        button_box = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            parent=self,
+        )
+        button_box.accepted.connect(self.accept)
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
+
+    def selected_sheet_names(self) -> tuple[str, ...]:
+        selected_names: list[str] = []
+        for index in range(self._sheet_list.count()):
+            item = self._sheet_list.item(index)
+            if item.checkState() == Qt.Checked:
+                sheet_name = item.data(Qt.UserRole)
+                if isinstance(sheet_name, str):
+                    selected_names.append(sheet_name)
+        return tuple(selected_names)
+
+    def accept(self) -> None:
+        if not self.selected_sheet_names():
+            QMessageBox.warning(
+                self,
+                "No Sheets Selected",
+                "Select at least one worksheet to continue.",
+            )
+            return
+        super().accept()
+
+    def _select_suggested(self) -> None:
+        for index in range(self._sheet_list.count()):
+            item = self._sheet_list.item(index)
+            suggested = "Detected timestamp column:" in item.toolTip()
+            item.setCheckState(Qt.Checked if suggested else Qt.Unchecked)
+
+    def _select_all(self) -> None:
+        for index in range(self._sheet_list.count()):
+            self._sheet_list.item(index).setCheckState(Qt.Checked)
+
+    def _clear_selection(self) -> None:
+        for index in range(self._sheet_list.count()):
+            self._sheet_list.item(index).setCheckState(Qt.Unchecked)
+
+    def _describe_sheet(self, info: WorkbookSheetInfo) -> str:
+        if info.is_data_sheet and info.timestamp_column:
+            return (
+                f"{info.name}  ({info.tag_count} tags, {info.row_count} rows, "
+                f"time column: {info.timestamp_column})"
+            )
+        return f"{info.name}  ({info.row_count} rows, no timestamp detected)"
 
 
 class TrendViewerMainWindow(QMainWindow):
@@ -316,13 +440,50 @@ class TrendViewerMainWindow(QMainWindow):
         if not file_path:
             return
 
-        self._start_background_load(file_path)
+        workbook_name = Path(file_path).name
+        self.statusBar().showMessage(f"Scanning worksheets in {workbook_name}...")
+        QApplication.processEvents()
 
-    def _start_background_load(self, file_path: str) -> None:
+        try:
+            sheet_info = DataManager.inspect_workbook(file_path)
+        except Exception as exc:
+            QMessageBox.critical(
+                self,
+                "Workbook Scan Failed",
+                f"Unable to inspect worksheets in {workbook_name}.\n\n{exc}",
+            )
+            self.statusBar().showMessage("Workbook scan failed.", 5000)
+            return
+
+        if not sheet_info:
+            QMessageBox.warning(
+                self,
+                "No Worksheets Found",
+                f"No readable worksheets were found in {workbook_name}.",
+            )
+            self.statusBar().showMessage("No worksheets found.", 5000)
+            return
+
+        if len(sheet_info) == 1:
+            selected_sheets = (sheet_info[0].name,)
+        else:
+            dialog = SheetSelectionDialog(workbook_name, sheet_info, self)
+            if dialog.exec() != QDialog.Accepted:
+                self.statusBar().showMessage("Workbook load cancelled.", 3000)
+                return
+            selected_sheets = dialog.selected_sheet_names()
+
+        self._start_background_load(file_path, selected_sheets)
+
+    def _start_background_load(self, file_path: str, sheet_names: tuple[str, ...]) -> None:
         self._open_action.setEnabled(False)
-        self.statusBar().showMessage(f"Starting background load for {Path(file_path).name}...")
+        workbook_name = Path(file_path).name
+        sheet_summary = self._format_sheet_summary(sheet_names)
+        self.statusBar().showMessage(
+            f"Starting background load for {workbook_name} ({sheet_summary})..."
+        )
 
-        worker = ExcelLoadWorker(file_path)
+        worker = ExcelLoadWorker(file_path, sheet_names)
         thread = QThread(self)
         worker.moveToThread(thread)
 
@@ -354,8 +515,9 @@ class TrendViewerMainWindow(QMainWindow):
             self._plot_canvas.set_time_range(*time_range)
 
         source_name = manager.source_path.name if manager.source_path else "workbook"
+        sheet_summary = self._format_sheet_summary(manager.sheet_names or ("active sheet",))
         self.statusBar().showMessage(
-            f"Loaded {len(manager.available_tags)} tags from {source_name}.",
+            f"Loaded {len(manager.available_tags)} tags from {source_name} ({sheet_summary}).",
             5000,
         )
 
@@ -698,3 +860,13 @@ class TrendViewerMainWindow(QMainWindow):
         if value is None or np.isnan(value):
             return "-"
         return f"{value:.3f}"
+
+    def _format_sheet_summary(self, sheet_names: tuple[str, ...]) -> str:
+        if not sheet_names:
+            return "default sheet"
+        if len(sheet_names) == 1:
+            return f"sheet: {sheet_names[0]}"
+        preview = ", ".join(sheet_names[:2])
+        if len(sheet_names) > 2:
+            preview = f"{preview}, +{len(sheet_names) - 2} more"
+        return f"{len(sheet_names)} sheets: {preview}"

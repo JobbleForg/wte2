@@ -6,7 +6,8 @@ Current scope:
 
 - ISA-101-style PySide6 desktop shell with toolbar, tag browser, plot area, and analytics grid
 - Background Excel loading on a worker thread with Polars `engine="calamine"`
-- Automatic timestamp-column inference for workbook imports
+- Workbook sheet inspection with multi-select loading when multiple worksheets exist
+- Safer timestamp-column inference that rejects metadata sheets without trend timestamps
 - Normalized master timeline with forward-filled sparse tag values
 - Custom hierarchical `QAbstractItemModel` tag tree with drag-and-drop support
 - PyQtGraph multi-axis trend canvas with linked X ranges and independent Y axes
@@ -21,6 +22,12 @@ from wte_trend_viewer import DataManager
 
 manager = DataManager()
 manager.load_excel("trend-export.xlsx", timestamp_column="Timestamp")
+
+multi_sheet_manager = DataManager()
+multi_sheet_manager.load_workbook(
+    "trend-export.xlsx",
+    sheet_names=["Customer Data", "L1 Data 12h"],
+)
 
 window = manager.get_window(
     start="2026-03-01T00:00:00",
@@ -40,7 +47,9 @@ UI workflow:
 
 - Launch the app
 - Click `Open Excel`
+- If the workbook has multiple worksheets, select one or more data sheets in the dialog
 - Wait for the workbook to load in the background
+- When multiple sheets are loaded, tags are grouped under their sheet names in the tag tree
 - Drag a tag from the left tree onto the plot
 - Zoom or pan to trigger active resampling
 - Move the mouse across the plot to update the analytics grid

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
 from pathlib import Path
+import re
 from typing import Sequence
 
 import numpy as np
@@ -41,6 +42,8 @@ TIMESTAMP_COLUMN_CANDIDATES = (
     "date",
 )
 DEFAULT_MINMAX_RATIO = 4
+COMBINED_TIMESTAMP_COLUMN = "Timestamp"
+NORMALIZED_NAME_PATTERN = re.compile(r"[^0-9a-zA-Z]+")
 
 
 @dataclass(frozen=True)
@@ -48,6 +51,19 @@ class DownsampledSeries:
     timestamps: np.ndarray
     values: np.ndarray
     indices: np.ndarray
+
+
+@dataclass(frozen=True)
+class WorkbookSheetInfo:
+    name: str
+    row_count: int
+    column_count: int
+    timestamp_column: str | None
+    tag_count: int
+
+    @property
+    def is_data_sheet(self) -> bool:
+        return self.timestamp_column is not None and self.tag_count > 0
 
 
 class DataManager:
@@ -58,6 +74,7 @@ class DataManager:
         self._timestamp_column: str | None = None
         self._tag_columns: list[str] = []
         self._source_path: Path | None = None
+        self._sheet_names: tuple[str, ...] = ()
         self._downsampler = MinMaxLTTBDownsampler()
 
     @property
@@ -80,6 +97,61 @@ class DataManager:
     def source_path(self) -> Path | None:
         return self._source_path
 
+    @property
+    def sheet_names(self) -> tuple[str, ...]:
+        return self._sheet_names
+
+    @classmethod
+    def inspect_workbook(
+        cls,
+        source: str | Path,
+        *,
+        infer_schema_length: int | None = 1_000,
+    ) -> tuple[WorkbookSheetInfo, ...]:
+        frames = pl.read_excel(
+            source,
+            sheet_id=0,
+            engine="calamine",
+            infer_schema_length=infer_schema_length,
+        )
+
+        if isinstance(frames, pl.DataFrame):
+            sheet_map = {"Sheet1": frames}
+        else:
+            sheet_map = frames
+
+        inspector = cls()
+        info: list[WorkbookSheetInfo] = []
+        for sheet_name, frame in sheet_map.items():
+            if not isinstance(frame, pl.DataFrame):
+                continue
+
+            timestamp_column = inspector._find_timestamp_column(frame)
+            tag_count = 0
+            if timestamp_column is not None:
+                try:
+                    tag_count = len(
+                        inspector._resolve_tag_columns(
+                            frame,
+                            timestamp_column=timestamp_column,
+                            tag_columns=None,
+                        )
+                    )
+                except (KeyError, ValueError):
+                    tag_count = 0
+
+            info.append(
+                WorkbookSheetInfo(
+                    name=sheet_name,
+                    row_count=frame.height,
+                    column_count=frame.width,
+                    timestamp_column=timestamp_column,
+                    tag_count=tag_count,
+                )
+            )
+
+        return tuple(info)
+
     def load_excel(
         self,
         source: str | Path,
@@ -101,13 +173,85 @@ class DataManager:
         if not isinstance(frame, pl.DataFrame):
             raise TypeError("Expected a single worksheet to be loaded as a Polars DataFrame.")
 
-        resolved_timestamp_column = timestamp_column or self._infer_timestamp_column(frame)
+        resolved_timestamp_column = timestamp_column or self._infer_timestamp_column(
+            frame,
+            sheet_name=sheet_name,
+        )
         self._source_path = Path(source)
+        self._sheet_names = (sheet_name,) if sheet_name else ()
         return self.load_frame(
             frame,
             timestamp_column=resolved_timestamp_column,
             tag_columns=tag_columns,
         )
+
+    def load_workbook(
+        self,
+        source: str | Path,
+        *,
+        sheet_names: Sequence[str],
+        infer_schema_length: int | None = 1_000,
+    ) -> pl.DataFrame:
+        unique_sheet_names = tuple(dict.fromkeys(sheet_name for sheet_name in sheet_names if sheet_name))
+        if not unique_sheet_names:
+            raise ValueError("Select at least one worksheet to load.")
+
+        prepared_frames: list[pl.DataFrame] = []
+        combined_tags: list[str] = []
+        multi_sheet = len(unique_sheet_names) > 1
+
+        for sheet_name in unique_sheet_names:
+            frame = pl.read_excel(
+                source,
+                sheet_name=sheet_name,
+                engine="calamine",
+                infer_schema_length=infer_schema_length,
+            )
+            if not isinstance(frame, pl.DataFrame):
+                raise TypeError(
+                    f"Expected worksheet {sheet_name!r} to load as a Polars DataFrame."
+                )
+
+            resolved_timestamp_column = self._infer_timestamp_column(frame, sheet_name=sheet_name)
+            resolved_tag_columns = self._resolve_tag_columns(
+                frame,
+                timestamp_column=resolved_timestamp_column,
+                tag_columns=None,
+            )
+            prepared = self._prepare_sheet_frame(
+                frame,
+                sheet_name=sheet_name,
+                timestamp_column=resolved_timestamp_column,
+                tag_columns=resolved_tag_columns,
+                prefix_tags=multi_sheet,
+            )
+            prepared_frames.append(prepared)
+            combined_tags.extend(column_name for column_name in prepared.columns if column_name != COMBINED_TIMESTAMP_COLUMN)
+
+        merged = prepared_frames[0]
+        for frame in prepared_frames[1:]:
+            merged = merged.join(
+                frame,
+                on=COMBINED_TIMESTAMP_COLUMN,
+                how="full",
+                coalesce=True,
+            )
+
+        merged = (
+            merged
+            .sort(COMBINED_TIMESTAMP_COLUMN)
+            .with_columns(
+                [pl.col(column_name).fill_null(strategy="forward") for column_name in combined_tags]
+            )
+            .rechunk()
+        )
+
+        self._source_path = Path(source)
+        self._sheet_names = unique_sheet_names
+        self._timestamp_column = COMBINED_TIMESTAMP_COLUMN
+        self._tag_columns = combined_tags
+        self._dataframe = merged
+        return merged
 
     def load_frame(
         self,
@@ -130,6 +274,7 @@ class DataManager:
         self._timestamp_column = timestamp_column
         self._tag_columns = resolved_tag_columns
         self._dataframe = prepared
+        self._sheet_names = ()
         return prepared
 
     def normalize_time_index(
@@ -321,6 +466,29 @@ class DataManager:
         )
         return normalized.sort(timestamp_column)
 
+    def _prepare_sheet_frame(
+        self,
+        frame: pl.DataFrame,
+        *,
+        sheet_name: str,
+        timestamp_column: str,
+        tag_columns: Sequence[str],
+        prefix_tags: bool,
+    ) -> pl.DataFrame:
+        rename_map = {timestamp_column: COMBINED_TIMESTAMP_COLUMN}
+        tag_name_map = {
+            column_name: f"{sheet_name}/{column_name}" if prefix_tags else column_name
+            for column_name in tag_columns
+        }
+        rename_map.update(tag_name_map)
+        selected_frame = frame.select([timestamp_column, *tag_columns]).rename(rename_map)
+        normalized = self.normalize_time_index(
+            selected_frame,
+            timestamp_column=COMBINED_TIMESTAMP_COLUMN,
+            tag_columns=list(tag_name_map.values()),
+        )
+        return normalized.sort(COMBINED_TIMESTAMP_COLUMN)
+
     def _parse_timestamp_column(self, frame: pl.DataFrame, timestamp_column: str) -> pl.DataFrame:
         if timestamp_column not in frame.columns:
             raise KeyError(f"Missing timestamp column: {timestamp_column}")
@@ -380,21 +548,71 @@ class DataManager:
 
         return resolved
 
-    def _infer_timestamp_column(self, frame: pl.DataFrame) -> str:
+    def _infer_timestamp_column(
+        self,
+        frame: pl.DataFrame,
+        *,
+        sheet_name: str | None = None,
+    ) -> str:
+        timestamp_column = self._find_timestamp_column(frame)
+        if timestamp_column is not None:
+            return timestamp_column
+
+        sheet_context = f" in worksheet {sheet_name!r}" if sheet_name else ""
+        raise ValueError(
+            f"Could not infer a timestamp column{sheet_context}. "
+            "Select a worksheet that contains trend data or specify timestamp_column."
+        )
+
+    def _find_timestamp_column(self, frame: pl.DataFrame) -> str | None:
         normalized_names = {
-            column_name: column_name.strip().lower().replace("_", " ")
+            column_name: self._normalize_column_name(column_name)
             for column_name in frame.columns
         }
+        candidate_columns: list[str] = []
+
         for candidate in TIMESTAMP_COLUMN_CANDIDATES:
             for original_name, normalized_name in normalized_names.items():
-                if candidate == normalized_name or candidate in normalized_name:
-                    return original_name
+                if candidate == normalized_name:
+                    candidate_columns.append(original_name)
+
+        for original_name, normalized_name in normalized_names.items():
+            parts = normalized_name.split()
+            if any(candidate in parts for candidate in TIMESTAMP_COLUMN_CANDIDATES):
+                candidate_columns.append(original_name)
 
         for column_name, dtype in frame.schema.items():
             if dtype.is_temporal():
+                candidate_columns.append(column_name)
+
+        ordered_candidates = list(dict.fromkeys(candidate_columns))
+        for column_name in ordered_candidates:
+            if self._is_viable_timestamp_column(frame, column_name):
                 return column_name
 
-        return frame.columns[0]
+        return None
+
+    def _is_viable_timestamp_column(self, frame: pl.DataFrame, column_name: str) -> bool:
+        try:
+            parsed_frame = self._parse_timestamp_column(frame.select([column_name]), column_name)
+        except (KeyError, TypeError, ValueError):
+            return False
+
+        parsed_values = parsed_frame.get_column(column_name).drop_nulls()
+        if parsed_values.is_empty():
+            return False
+        if frame.height > 0 and (parsed_values.len() / frame.height) < 0.5:
+            return False
+        if parsed_values.len() > 1 and parsed_values.n_unique() < 2:
+            return False
+
+        ascending = parsed_values.equals(parsed_values.sort())
+        descending = parsed_values.equals(parsed_values.sort(descending=True))
+        return ascending or descending
+
+    def _normalize_column_name(self, value: str) -> str:
+        collapsed = NORMALIZED_NAME_PATTERN.sub(" ", value.strip().lower())
+        return " ".join(collapsed.split())
 
     def _validate_tags(self, tags: Sequence[str]) -> None:
         missing = sorted(set(tags) - set(self._tag_columns))
