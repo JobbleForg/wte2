@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "wte-trend-viewer"
-version = "1.0.0"
-description = "Modern SCADA trend viewer prototype guided by the project blueprint."
+version = "0.1.0"
+description = "SCADA trend viewer scaffold structured around the PDF implementation phases."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,8 +17,14 @@ dependencies = [
     "tsdownsample @ git+https://github.com/predict-idlab/tsdownsample.git@cdb709468a5979eda7a7a1d702ababd89cebc78a ; python_version >= '3.14'",
 ]
 
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3,<9",
+    "ruff>=0.12,<0.13",
+]
+
 [project.scripts]
-wte-trend-viewer = "wte_trend_viewer.app:main"
+wte-trend-viewer = "wte_trend_viewer.bootstrap:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
@@ -26,3 +32,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

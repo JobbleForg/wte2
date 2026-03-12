@@ -1,4 +1,4 @@
-from .app import main
+from .bootstrap import main
+
 
 raise SystemExit(main())
-

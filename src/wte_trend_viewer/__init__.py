@@ -1,7 +1,5 @@
-from .data_manager import DataManager, DownsampledSeries
+"""WTE Trend Viewer package scaffold."""
 
-__all__ = ["DataManager", "DownsampledSeries", "__version__"]
+__all__ = ["__version__"]
 
-__version__ = "1.0.0"
-
-
+__version__ = "0.1.0"
